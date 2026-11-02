@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#101e27" />
-  <meta name="description" content="Keep packing checks, lot references, and shipment photos together in a private, local-first order record." />
-  <title>PackProof — packing records, together</title>
+  <meta name="description" content="Import an order, verify packed quantities across lots, attach shipment photos, and confirm a dispatch check in a private local-first workflow." />
+  <title>PackProof — a clearer packing workflow</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="style.css" />
@@ -33,13 +33,14 @@
             <label>Customer (optional)<input id="customer" type="text" maxlength="100" placeholder="Customer or site" autocomplete="off" /></label>
             <label>Carrier / vehicle (optional)<input id="carrier" type="text" maxlength="80" placeholder="e.g. Van 3" autocomplete="off" /></label>
             <label>Dispatch date<input id="dispatchDate" type="date" /></label>
+            <label>Packed by<input id="packedBy" type="text" maxlength="80" placeholder="Name or initials" autocomplete="off" /></label>
           </div>
         </section>
         <section class="panel lines-panel">
-          <div class="panel-title"><span class="step-no">02</span><div><h3>Pack check</h3><p>Compare requested and packed quantities; note each lot used.</p></div><button id="addLine" class="secondary small">＋ Add item</button></div>
+          <div class="panel-title"><span class="step-no">02</span><div><h3>Pack check</h3><p>Import an order list, scan packed items, and allocate packed units to one or more lots.</p></div><div class="line-actions"><button id="csvTemplate" class="text-button">CSV template</button><label for="csvInput" class="secondary small upload-button">↑ Import CSV</label><input id="csvInput" type="file" accept=".csv,text/csv" hidden /><button id="addLine" class="secondary small">＋ Add item</button></div></div>
           <div class="scan-row"><label class="scan-input"><span class="scan-icon">▦</span><input id="scanInput" type="text" placeholder="Scan barcode, then press Enter" autocomplete="off" aria-label="Scan barcode" /><kbd>ENTER</kbd></label><button id="cameraScan" class="secondary small">▣ <span>Use camera</span></button><span id="cameraHint" class="scan-hint">USB/Bluetooth scanners work like a keyboard.</span></div>
           <div id="cameraPanel" class="camera-panel hidden"><video id="cameraVideo" playsinline muted></video><button id="stopCamera" class="text-button">Stop camera</button><span id="cameraMessage">Point at an item barcode</span></div>
-          <div class="table-wrap"><table><thead><tr><th>Item / SKU</th><th>Requested</th><th>Packed</th><th>Lot / batch reference</th><th aria-label="Remove"></th></tr></thead><tbody id="lineRows"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Item / SKU</th><th>Requested</th><th>Packed</th><th>Lot allocations · batch + quantity</th><th aria-label="Remove"></th></tr></thead><tbody id="lineRows"></tbody></table></div>
           <button id="addLineMobile" class="secondary add-mobile">＋ Add item</button>
           <div class="check-summary" id="checkSummary"></div>
         </section>
@@ -48,6 +49,7 @@
           <div id="photoGrid" class="photo-grid"><p class="photo-empty">No photos added. A clear overall shot and close-ups of labels can be useful.</p></div>
         </section>
         <section class="panel notes-panel"><label class="notes-label"><span class="step-no">04</span><span><b>Notes (optional)</b><small>Short details about this pack, if needed.</small></span><textarea id="notes" rows="2" maxlength="500" placeholder="e.g. Split across two pallets; pallet IDs P-01 and P-02"></textarea></label></section>
+        <section class="dispatch-check" aria-live="polite"><div><span class="dispatch-icon">✓</span><span><b id="dispatchTitle">Ready when the checks are complete</b><small id="dispatchDetail">Match quantities, identify lots, and enter who packed the order.</small></span></div><button id="confirmPack" class="primary">Confirm pack check</button></section>
         <div class="editor-footer"><span class="privacy-note">🔒 Local-only record. No cloud sync or tamper-proof timestamp.</span><button id="saveBackup" class="text-button">Export this record ↓</button></div>
       </article>
       <footer class="app-footer">PackProof is a packing-record helper, not a certified chain-of-custody, inventory, or shipping system. Confirm quantities and any customer requirements independently.</footer>

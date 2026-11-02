@@ -1,6 +1,6 @@
 # PackProof
 
-**Keep each shipment’s packing record together.** PackProof is a local-first packing record helper for small warehouse teams who need to keep item counts, lot references, and shipment photos together per order—without replacing their inventory system.
+**Keep each shipment’s packing record together.** PackProof is a local-first packing workflow for small warehouse teams: import an order list, verify packed quantities across multiple lots, attach shipment photos, and confirm a dispatch check—without replacing an inventory system.
 
 **Live app:** https://goutham-valugula.github.io/packproof/
 
@@ -12,16 +12,18 @@ Inventory products already offer barcode and lot tracking. For example, [HandiFo
 
 ## Use it
 
-Open the [live app](https://goutham-valugula.github.io/packproof/) or `index.html` in a modern browser. Create a shipment, add order lines, enter requested/packed quantities and lot references, and attach photos. Use **Print report** to save a PDF, or export the selected record/workspace as JSON for backup. Use **Import backup** to restore exported records into another browser; imports are added without overwriting existing IDs.
+Open the [live app](https://goutham-valugula.github.io/packproof/) or `index.html` in a modern browser. Create a shipment and import a CSV order list, or add lines manually. The CSV needs a header row and an item identifier (`sku` or `name`) plus a requested quantity (`requested`); optional `lot` values prefill the lot allocation. Use **CSV template** for an example. Imported rows are appended and do not replace existing lines.
 
-A USB or Bluetooth barcode scanner that types into a focused field works with the scan box. On compatible HTTPS browsers, **Use camera** can scan common product barcodes. A scan increments the packed count for a matching SKU; for an unknown code, it creates a new line with a packed count of one. Enter the expected count and lot reference afterward.
+A USB or Bluetooth barcode scanner that types into a focused field works with the scan box. On compatible HTTPS browsers, **Use camera** can scan common product barcodes. A scan increments the packed quantity on the matching SKU; for an unknown code, it creates a line with one packed unit. For each item, allocate the packed quantity across one or more lot/batch references. The pack summary flags quantity mismatches. Enter a packer name and confirm only after every requested quantity matches and every packed unit has a lot reference. Any later edit clears the confirmation so the check must be repeated.
+
+Use **Print report** to save the selected packing record as PDF, including its lot allocations, photos, notes, and check confirmation. Export a single record or the whole workspace as JSON for backup; **Import backup** adds records without overwriting IDs already in this browser.
 
 The app works offline after it has been opened once from a hosted HTTPS site. No build step, account, analytics, backend, or external API is used. Records and photo attachments are stored in the current browser on this device. Exported JSON can contain customer, order, and photo data; store backups carefully.
 
 ## Important limitations
 
 - Data does not sync between devices or team members. Back up records before clearing browser storage or changing devices.
-- Local timestamps use the device clock and are not tamper-proof.
+- Confirmation and timestamps are stored locally and use the device clock; they are not tamper-proof and do not prove identity or chain of custody.
 - PackProof is not a certified chain-of-custody, inventory, shipping, safety, or compliance system. Confirm records and customer requirements independently.
 - Do not store sensitive customer or regulated product details on shared devices.
 - Camera barcode scanning depends on browser support; a keyboard-style scanner or manual entry is the fallback.

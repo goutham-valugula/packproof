@@ -6,9 +6,10 @@
   const el = {
     list: $('shipmentList'), search: $('searchShipments'), editor: $('editor'), empty: $('emptyState'),
     title: $('editorTitle'), status: $('recordStatus'), savedAt: $('savedAt'), orderRef: $('orderRef'),
-    customer: $('customer'), carrier: $('carrier'), date: $('dispatchDate'), notes: $('notes'),
+    customer: $('customer'), carrier: $('carrier'), date: $('dispatchDate'), packedBy: $('packedBy'), notes: $('notes'),
     rows: $('lineRows'), summary: $('checkSummary'), photos: $('photoGrid'), photoInput: $('photoInput'),
-    scan: $('scanInput'), cameraPanel: $('cameraPanel'), video: $('cameraVideo'), cameraMessage: $('cameraMessage'), toast: $('toast')
+    scan: $('scanInput'), cameraPanel: $('cameraPanel'), video: $('cameraVideo'), cameraMessage: $('cameraMessage'), toast: $('toast'),
+    csvInput: $('csvInput'), dispatchTitle: $('dispatchTitle'), dispatchDetail: $('dispatchDetail'), confirmPack: $('confirmPack')
   };
   let db = null;
   let records = [];
@@ -70,7 +71,22 @@
     toastTimer = setTimeout(() => el.toast.classList.remove('show'), 2200);
   }
   function newRecord() {
-    return { id: uid(), orderRef: '', customer: '', carrier: '', dispatchDate: today(), notes: '', lines: [], photos: [], createdAt: Date.now(), updatedAt: Date.now() };
+    return { id: uid(), orderRef: '', customer: '', carrier: '', dispatchDate: today(), packedBy: '', notes: '', checkedAt: null, checkedBy: '', lines: [], photos: [], createdAt: Date.now(), updatedAt: Date.now() };
+  }
+  function normalizeRecord(record) {
+    record.packedBy ||= '';
+    record.checkedAt ||= null;
+    record.checkedBy ||= '';
+    record.photos ||= [];
+    record.lines = (record.lines || []).map((line) => {
+      line.sku ||= '';
+      line.name ||= '';
+      line.expected ??= '';
+      if (!Array.isArray(line.lots)) line.lots = [{ id: uid(), code: line.lot || '', quantity: Number(line.packed) || 0 }];
+      line.lots = line.lots.map((lot) => ({ id: lot.id || uid(), code: lot.code || '', quantity: Math.max(0, Number(lot.quantity) || 0) }));
+      return line;
+    });
+    return record;
   }
   function showEditor() {
     el.empty.classList.add('hidden');
@@ -83,19 +99,21 @@
   }
   async function selectRecord(record) {
     if (current && saveTimer) await flushSave();
-    current = structuredClone(record);
+    current = normalizeRecord(structuredClone(record));
     showEditor();
     el.orderRef.value = current.orderRef || '';
     el.customer.value = current.customer || '';
     el.carrier.value = current.carrier || '';
     el.date.value = current.dispatchDate || today();
+    el.packedBy.value = current.packedBy || '';
     el.notes.value = current.notes || '';
     el.title.textContent = current.orderRef ? current.orderRef : 'New shipment';
-    el.status.textContent = current.orderRef ? 'SAVED RECORD' : 'DRAFT';
+    el.status.textContent = current.checkedAt ? 'PACK CHECKED' : current.orderRef ? 'SAVED RECORD' : 'DRAFT';
     el.savedAt.textContent = current.updatedAt ? `Last saved ${dateTime(current.updatedAt)}` : 'Not saved';
     renderLines();
     renderPhotos();
     updateSummary();
+    updateDispatch();
     renderList();
   }
   function renderList() {
@@ -128,33 +146,84 @@
     el.rows.innerHTML = current.lines.map((line) => `<tr data-id="${escapeHTML(line.id)}">
       <td><div class="item-fields"><input data-field="sku" aria-label="SKU or barcode" placeholder="SKU / barcode" value="${escapeHTML(line.sku)}" /><input data-field="name" aria-label="Item description" placeholder="Item description" value="${escapeHTML(line.name)}" /></div></td>
       <td><input class="qty-input" data-field="expected" aria-label="Requested quantity" type="number" min="0" step="1" value="${escapeHTML(line.expected)}" /></td>
-      <td><input class="qty-input" data-field="packed" aria-label="Packed quantity" type="number" min="0" step="1" value="${escapeHTML(line.packed)}" /></td>
-      <td><input data-field="lot" aria-label="Lot or batch reference" placeholder="Lot / batch" value="${escapeHTML(line.lot)}" /></td>
+      <td><strong class="packed-total">${line.lots.reduce((sum, lot) => sum + lot.quantity, 0)}</strong></td>
+      <td><div class="lot-stack">${line.lots.map((lot) => `<div class="lot-row" data-lot-id="${escapeHTML(lot.id)}"><input data-lot-field="code" aria-label="Lot or batch reference" placeholder="Lot / batch" value="${escapeHTML(lot.code)}" /><input class="qty-input" data-lot-field="quantity" aria-label="Quantity from this lot" type="number" min="0" step="1" value="${escapeHTML(lot.quantity)}" /><button class="remove-lot" type="button" aria-label="Remove lot allocation" title="Remove lot">×</button></div>`).join('')}<button class="add-lot" type="button">＋ Add lot</button></div></td>
       <td><button class="remove-line" type="button" aria-label="Remove item">×</button></td></tr>`).join('');
-    el.rows.querySelectorAll('input').forEach((input) => {
+    el.rows.querySelectorAll('input[data-field]').forEach((input) => {
       input.addEventListener('input', () => {
         const row = input.closest('tr');
         const line = current.lines.find((item) => item.id === row.dataset.id);
         if (!line) return;
         const field = input.dataset.field;
-        line[field] = field === 'expected' || field === 'packed' ? Math.max(0, Number(input.value) || 0) : input.value;
+        line[field] = field === 'expected' ? Math.max(0, Number(input.value) || 0) : input.value;
         updateSummary();
+        updateDispatch();
         scheduleSave();
       });
     });
+    el.rows.querySelectorAll('[data-lot-field]').forEach((input) => input.addEventListener('input', () => {
+      const row = input.closest('tr');
+      const lotRow = input.closest('.lot-row');
+      const line = current.lines.find((item) => item.id === row.dataset.id);
+      const lot = line?.lots.find((item) => item.id === lotRow.dataset.lotId);
+      if (!lot) return;
+      lot[input.dataset.lotField] = input.dataset.lotField === 'quantity' ? Math.max(0, Number(input.value) || 0) : input.value.trim();
+      row.querySelector('.packed-total').textContent = line.lots.reduce((sum, item) => sum + item.quantity, 0);
+      updateSummary(); updateDispatch(); scheduleSave();
+    }));
+    el.rows.querySelectorAll('.add-lot').forEach((button) => button.addEventListener('click', () => {
+      const line = current.lines.find((item) => item.id === button.closest('tr').dataset.id);
+      if (!line) return;
+      line.lots.push({ id: uid(), code: '', quantity: 0 });
+      renderLines(); updateDispatch(); scheduleSave();
+      const inputs = el.rows.querySelectorAll('tr:last-child .lot-row:last-of-type input');
+      inputs[0]?.focus();
+    }));
+    el.rows.querySelectorAll('.remove-lot').forEach((button) => button.addEventListener('click', () => {
+      const row = button.closest('tr');
+      const line = current.lines.find((item) => item.id === row.dataset.id);
+      line.lots = line.lots.filter((lot) => lot.id !== button.closest('.lot-row').dataset.lotId);
+      renderLines(); updateSummary(); updateDispatch(); scheduleSave();
+    }));
     el.rows.querySelectorAll('.remove-line').forEach((button) => button.addEventListener('click', () => {
       current.lines = current.lines.filter((line) => line.id !== button.closest('tr').dataset.id);
-      renderLines(); updateSummary(); scheduleSave();
+      renderLines(); updateSummary(); updateDispatch(); scheduleSave();
     }));
   }
   function updateSummary() {
     if (!current) return;
     const requested = current.lines.reduce((sum, line) => sum + (Number(line.expected) || 0), 0);
-    const packed = current.lines.reduce((sum, line) => sum + (Number(line.packed) || 0), 0);
-    const mismatches = current.lines.filter((line) => Number(line.expected) !== Number(line.packed)).length;
+    const packed = current.lines.reduce((sum, line) => sum + line.lots.reduce((lotSum, lot) => lotSum + (Number(lot.quantity) || 0), 0), 0);
+    const mismatches = current.lines.filter((line) => Number(line.expected) !== line.lots.reduce((sum, lot) => sum + (Number(lot.quantity) || 0), 0)).length;
     const needs = mismatches > 0;
     el.summary.classList.toggle('needs-attention', needs);
     el.summary.innerHTML = `<span><strong>${current.lines.length}</strong> item line${current.lines.length === 1 ? '' : 's'}</span><span><strong>${packed}</strong> packed / ${requested} requested</span><span class="summary-state">${needs ? `${mismatches} line${mismatches === 1 ? '' : 's'} to review` : current.lines.length ? 'Quantities match' : 'Add items to begin'}</span>`;
+    updateDispatch();
+  }
+  function checkIssues() {
+    if (!current) return ['Open a packing record first.'];
+    const issues = [];
+    if (!el.orderRef.value.trim()) issues.push('Add an order reference');
+    if (!el.packedBy.value.trim()) issues.push('Enter who packed the order');
+    if (!current.lines.length) issues.push('Add at least one item');
+    for (const line of current.lines) {
+      const packed = line.lots.reduce((sum, lot) => sum + (Number(lot.quantity) || 0), 0);
+      if (line.expected === '' || line.expected == null) issues.push(`${line.sku || line.name || 'An item'} is missing requested quantity`);
+      if (Number(line.expected) !== packed) issues.push(`${line.sku || line.name || 'An item'} quantity does not match`);
+      if (!line.sku.trim() && !line.name.trim()) issues.push('An item line is missing its SKU or description');
+      if (line.lots.some((lot) => lot.quantity > 0 && !lot.code.trim())) issues.push(`${line.sku || line.name || 'An item'} has packed quantity without a lot reference`);
+    }
+    return issues;
+  }
+  function updateDispatch() {
+    if (!current || !el.confirmPack) return;
+    const issues = checkIssues();
+    const checked = Boolean(current.checkedAt && !issues.length);
+    el.dispatchTitle.textContent = checked ? `Pack check confirmed by ${current.checkedBy || current.packedBy}` : issues.length ? 'Finish the pack checks before dispatch' : 'Ready for packer confirmation';
+    el.dispatchDetail.textContent = checked ? `Confirmed ${dateTime(current.checkedAt)} on this device.` : issues.length ? issues.slice(0, 3).join(' · ') + (issues.length > 3 ? ` · +${issues.length - 3} more` : '') : 'Quantities match and each packed lot is identified.';
+    el.dispatchTitle.closest('.dispatch-check').classList.toggle('confirmed', checked);
+    el.confirmPack.textContent = checked ? 'Confirmed ✓' : 'Confirm pack check';
+    el.confirmPack.disabled = checked || issues.length > 0;
   }
   function renderPhotos() {
     if (!current) return;
@@ -170,9 +239,11 @@
   }
   function scheduleSave() {
     if (!current) return;
+    if (current.checkedAt) { current.checkedAt = null; current.checkedBy = ''; }
     clearTimeout(saveTimer);
     el.status.textContent = 'SAVING…';
     el.savedAt.textContent = 'Saving changes';
+    updateDispatch();
     saveTimer = setTimeout(flushSave, 350);
   }
   async function flushSave() {
@@ -183,6 +254,7 @@
     current.customer = el.customer.value.trim();
     current.carrier = el.carrier.value.trim();
     current.dispatchDate = el.date.value || '';
+    current.packedBy = el.packedBy.value.trim();
     current.notes = el.notes.value.trim();
     current.updatedAt = Date.now();
     const snapshot = structuredClone(current);
@@ -191,7 +263,7 @@
       const index = records.findIndex((record) => record.id === snapshot.id);
       if (index >= 0) records[index] = snapshot; else records.unshift(snapshot);
       el.title.textContent = snapshot.orderRef || 'New shipment';
-      el.status.textContent = snapshot.orderRef ? 'SAVED RECORD' : 'DRAFT';
+      el.status.textContent = snapshot.checkedAt ? 'PACK CHECKED' : snapshot.orderRef ? 'SAVED RECORD' : 'DRAFT';
       el.savedAt.textContent = `Last saved ${dateTime(snapshot.updatedAt)}`;
       renderList();
     } catch (error) {
@@ -203,8 +275,8 @@
   }
   function addLine(values = {}, focusSku = true) {
     if (!current) return;
-    current.lines.push({ id: uid(), sku: values.sku || '', name: values.name || '', expected: values.expected ?? '', packed: values.packed ?? '', lot: values.lot || '' });
-    renderLines(); updateSummary(); scheduleSave();
+    current.lines.push({ id: uid(), sku: values.sku || '', name: values.name || '', expected: values.expected ?? '', lots: values.lots || [{ id: uid(), code: values.lot || '', quantity: Number(values.packed) || 0 }] });
+    renderLines(); updateSummary(); updateDispatch(); scheduleSave();
     const last = el.rows.querySelector('tr:last-child input[data-field="sku"]');
     if (focusSku) last?.focus();
   }
@@ -213,13 +285,62 @@
     if (!cleaned || !current) return;
     const match = current.lines.find((line) => line.sku.trim().toLowerCase() === cleaned.toLowerCase());
     if (match) {
-      match.packed = (Number(match.packed) || 0) + 1;
-      renderLines(); updateSummary(); scheduleSave(); notify(`Packed count updated for ${cleaned}`);
+      if (!match.lots.length) match.lots.push({ id: uid(), code: '', quantity: 0 });
+      match.lots[0].quantity += 1;
+      renderLines(); updateSummary(); updateDispatch(); scheduleSave(); notify(`Packed count updated for ${cleaned}; confirm its lot allocation.`);
     } else {
       addLine({ sku: cleaned, packed: 1 }, false);
       el.scan.focus();
-      notify(`Added ${cleaned} with a packed count of 1. Enter requested quantity and lot.`);
+      notify(`Added ${cleaned} with 1 packed. Enter requested quantity and lot.`);
     }
+  }
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], cell = '', quoted = false;
+    const source = text.replace(/^\uFEFF/, '');
+    for (let i = 0; i < source.length; i++) {
+      const char = source[i];
+      if (quoted && char === '"' && source[i + 1] === '"') { cell += '"'; i++; }
+      else if (char === '"') quoted = !quoted;
+      else if (char === ',' && !quoted) { row.push(cell.trim()); cell = ''; }
+      else if ((char === '\n' || char === '\r') && !quoted) {
+        if (char === '\r' && source[i + 1] === '\n') i++;
+        row.push(cell.trim());
+        if (row.some((value) => value !== '')) rows.push(row);
+        row = []; cell = '';
+      } else cell += char;
+    }
+    row.push(cell.trim());
+    if (row.some((value) => value !== '')) rows.push(row);
+    if (quoted) throw new Error('This CSV has an unclosed quoted field.');
+    if (rows.length < 2) throw new Error('The CSV needs a header row and at least one item.');
+    const normalize = (value) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const headers = rows[0].map(normalize);
+    const findColumn = (names) => headers.findIndex((header) => names.includes(header));
+    const skuCol = findColumn(['sku', 'barcode', 'itemcode', 'productcode', 'code']);
+    const nameCol = findColumn(['name', 'item', 'description', 'product', 'itemdescription']);
+    const qtyCol = findColumn(['requested', 'quantity', 'qty', 'ordered', 'orderedqty', 'requestedqty']);
+    const lotCol = findColumn(['lot', 'batch', 'lotbatch', 'lotnumber', 'batchnumber']);
+    if (qtyCol < 0 || (skuCol < 0 && nameCol < 0)) throw new Error('CSV headers must include SKU or item name, and requested quantity. See the CSV template.');
+    const lines = rows.slice(1).map((cells) => {
+      const expected = Number((cells[qtyCol] || '').replace(/,/g, ''));
+      return { sku: skuCol < 0 ? '' : (cells[skuCol] || ''), name: nameCol < 0 ? '' : (cells[nameCol] || ''), expected, lot: lotCol < 0 ? '' : (cells[lotCol] || '') };
+    });
+    if (lines.some((line) => !Number.isInteger(line.expected) || line.expected < 0 || (!line.sku && !line.name))) throw new Error('Each CSV row needs an item identifier and a whole-number requested quantity of 0 or more.');
+    return lines;
+  }
+  async function importOrderCSV(file) {
+    if (!file || !current) return;
+    try {
+      const imported = parseCSV(await file.text());
+      if (current.lines.length && !confirm(`Append ${imported.length} item lines to this order? Existing lines will be kept.`)) return;
+      for (const line of imported) current.lines.push({ id: uid(), sku: line.sku, name: line.name, expected: line.expected, lots: [{ id: uid(), code: line.lot, quantity: 0 }] });
+      renderLines(); updateSummary(); scheduleSave();
+      notify(`${imported.length} order lines imported. Scan or enter lot allocations as you pack.`);
+    } catch (error) { notify(error.message || 'Could not import this CSV.'); }
+  }
+  function downloadCSVTemplate() {
+    download('packproof-order-template.csv', 'text/csv;charset=utf-8', 'sku,name,requested,lot\nSKU-100,Example item,12,\n');
   }
   function fileToDataURL(file) {
     return new Promise((resolve, reject) => {
@@ -246,15 +367,16 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   function safeFilename(value) { return (value || 'shipment').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').slice(0, 60) || 'shipment'; }
-  function exportCurrent() {
+  async function exportCurrent() {
     if (!current) return;
-    flushSave();
-    const data = { product: 'PackProof', formatVersion: 1, exportedAt: new Date().toISOString(), record: current };
+    await flushSave();
+    const data = { product: 'PackProof', formatVersion: 2, exportedAt: new Date().toISOString(), record: current };
     download(`packproof-${safeFilename(current.orderRef)}.json`, 'application/json', JSON.stringify(data, null, 2));
     notify('Record backup downloaded. Keep it somewhere private.');
   }
-  function exportAll() {
-    const data = { product: 'PackProof', formatVersion: 1, exportedAt: new Date().toISOString(), records };
+  async function exportAll() {
+    await flushSave();
+    const data = { product: 'PackProof', formatVersion: 2, exportedAt: new Date().toISOString(), records };
     download('packproof-backup.json', 'application/json', JSON.stringify(data, null, 2));
     notify('Workspace backup downloaded. It may contain customer and shipment details.');
   }
@@ -269,8 +391,9 @@
       const fresh = valid.filter((record) => !known.has(record.id));
       if (!fresh.length) { notify('These records are already in this browser.'); return; }
       if (!confirm(`Import ${fresh.length} packing record${fresh.length === 1 ? '' : 's'}? They will be added to this browser. Existing records will not be overwritten.`)) return;
-      for (const record of fresh) await persist(record);
-      records = [...fresh, ...records].sort((a, b) => b.updatedAt - a.updatedAt);
+      const normalized = fresh.map(normalizeRecord);
+      for (const record of normalized) await persist(record);
+      records = [...normalized, ...records].sort((a, b) => b.updatedAt - a.updatedAt);
       if (!current && records.length) await selectRecord(records[0]); else renderList();
       notify(`${fresh.length} record${fresh.length === 1 ? '' : 's'} imported.`);
     } catch (error) {
@@ -352,11 +475,22 @@
   $('backupInput').addEventListener('change', async () => { await importBackup($('backupInput').files?.[0]); $('backupInput').value = ''; });
   $('cameraScan').addEventListener('click', startCamera);
   $('stopCamera').addEventListener('click', stopCamera);
+  $('csvTemplate').addEventListener('click', downloadCSVTemplate);
+  el.csvInput.addEventListener('change', async () => { await importOrderCSV(el.csvInput.files?.[0]); el.csvInput.value = ''; });
+  el.confirmPack.addEventListener('click', async () => {
+    const issues = checkIssues();
+    if (issues.length) { notify(issues[0]); updateDispatch(); return; }
+    current.checkedAt = Date.now();
+    current.checkedBy = el.packedBy.value.trim();
+    await flushSave();
+    updateDispatch();
+    notify('Pack check confirmed on this device.');
+  });
   $('searchShipments').addEventListener('input', renderList);
   el.scan.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') { event.preventDefault(); handleScan(el.scan.value); el.scan.value = ''; }
   });
-  [el.orderRef, el.customer, el.carrier, el.date, el.notes].forEach((input) => input.addEventListener('input', () => {
+  [el.orderRef, el.customer, el.carrier, el.date, el.packedBy, el.notes].forEach((input) => input.addEventListener('input', () => {
     if (!current) return;
     if (input === el.orderRef) el.title.textContent = input.value.trim() || 'New shipment';
     scheduleSave();
